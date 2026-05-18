@@ -1,0 +1,143 @@
+#NoEnv
+#SingleInstance Force
+
+; Жестко заставляем скрипт работать в папке, где он сам физически находится
+SetWorkingDir %A_ScriptDir%
+
+DetectHiddenWindows, On
+WinClose, %A_ScriptName% ahk_class AutoHotkey
+
+; Принудительно запрашиваем права администратора и передаем ник персонажа дальше
+if not A_IsAdmin
+{
+    Run *RunAs "%A_ScriptFullPath%" "%1%"
+    ExitApp
+}
+
+; Получаем имя персонажа из HTA лаунчера
+CharName = %1%
+if (CharName = "")
+{
+    ExitApp
+}
+
+; ФИКС ПУТИ: Жестко указываем читать keys.txt из родной папки лаунчера
+DbFile := A_ScriptDir "\keys.txt"
+if !FileExist(DbFile)
+{
+    MsgBox, 48, Ошибка Window Manager, Не найден файл базы данных keys.txt по пути:`n%DbFile%
+    ExitApp
+}
+
+FoundProfile := 0
+Loop, Read, %DbFile%
+{
+    if (A_LoopReadLine = "")
+        continue
+        
+    Params := StrSplit(A_LoopReadLine, "|")
+    
+    ; Ищем строку, где имя персонажа (индекс 2) совпадает с присланным из HTA
+    if (Params[2] = CharName)
+    {
+        X_Pos       := Trim(Params[6])
+        Y_Pos       := Trim(Params[7])
+        Width       := Trim(Params[4])
+        Height      := Trim(Params[5])
+        UseSettings := Trim(Params[8])
+        FoundProfile := 1
+        break
+    }
+}
+
+; Если персонаж не найден в keys.txt — тихо закрываемся
+if (FoundProfile = 0 or UseSettings = "0" or UseSettings = "")
+{
+    ExitApp
+}
+
+; Ждем ровно 15 секунд, пока игра, запущенная из HTA, полностью загрузится
+Sleep, 15000
+
+; Находим ID активного окна запущенной игры Lineage 2
+hwnd1 := WinActive("A")
+if (hwnd1)
+{
+    ; Получаем реальные размеры рабочего стола вашего монитора 2560x1440
+    SysGet, WorkArea, MonitorWorkArea
+    MonW := WorkAreaRight - WorkAreaLeft
+    MonH := WorkAreaBottom - WorkAreaTop
+
+    Width  := Width + 0
+    Height := Height + 0
+
+    ; Переводим аргументы координат в нижний регистр для l, r, t, b
+    StringLower, P1, X_Pos
+    StringLower, P2, Y_Pos
+
+    ; === ЛОГИКА 1: ПОЛОВИНЫ ЭКРАНА (ДВЕ ОДИНАКОВЫЕ БУКВЫ) ===
+    if (P1 = "l" and P2 = "l")
+    {
+        Width := MonW / 2, Height := MonH, X_Pos := WorkAreaLeft, Y_Pos := WorkAreaTop
+    }
+    else if (P1 = "r" and P2 = "r")
+    {
+        Width := MonW / 2, Height := MonH, X_Pos := WorkAreaLeft + (MonW / 2), Y_Pos := WorkAreaTop
+    }
+    else if (P1 = "t" and P2 = "t")
+    {
+        Width := MonW, Height := MonH / 2, X_Pos := WorkAreaLeft, Y_Pos := WorkAreaTop
+    }
+    else if (P1 = "b" and P2 = "b")
+    {
+        Width := MonW, Height := MonH / 2, X_Pos := WorkAreaLeft, Y_Pos := WorkAreaTop + (MonH / 2)
+    }
+    
+    ; === ЛОГИКА 2: ЧЕТВЕРТИ ЭКРАНА (РАЗНЫЕ БУКВЫ, ПОРЯДОК НЕ ВАЖЕН) ===
+    else if ((P1 = "l" and P2 = "t") or (P1 = "t" and P2 = "l"))
+    {
+        Width := MonW / 2, Height := MonH / 2, X_Pos := WorkAreaLeft, Y_Pos := WorkAreaTop
+    }
+    else if ((P1 = "r" and P2 = "t") or (P1 = "t" and P2 = "r"))
+    {
+        Width := MonW / 2, Height := MonH / 2, X_Pos := WorkAreaLeft + (MonW / 2), Y_Pos := WorkAreaTop
+    }
+    else if ((P1 = "r" and P2 = "b") or (P1 = "b" and P2 = "r"))
+    {
+        Width := MonW / 2, Height := MonH / 2, X_Pos := WorkAreaLeft + (MonW / 2), Y_Pos := WorkAreaTop + (MonH / 2)
+    }
+    else if ((P1 = "l" and P2 = "b") or (P1 = "b" and P2 = "l"))
+    {
+        Width := MonW / 2, Height := MonH / 2, X_Pos := WorkAreaLeft, Y_Pos := WorkAreaTop + (MonH / 2)
+    }
+    
+    ; === ЛОГИКА 3: УМНЫЙ ПРИЛИПАЛА (СМЕСЬ БУКВЫ И ЦИФРЫ) ===
+    else if (P1 = "l" and RegExMatch(P2, "^\d+$"))
+    {
+        X_Pos := WorkAreaLeft + (Width * P2), Y_Pos := WorkAreaTop
+    }
+    else if (P1 = "r" and RegExMatch(P2, "^\d+$"))
+    {
+        X_Pos := WorkAreaRight - Width - (Width * P2), Y_Pos := WorkAreaTop
+    }
+    else if (RegExMatch(P1, "^\d+$") and P2 = "t")
+    {
+        X_Pos := WorkAreaLeft, Y_Pos := WorkAreaTop + (Height * P1)
+    }
+    else if (RegExMatch(P1, "^\d+$") and P2 = "b")
+    {
+        X_Pos := WorkAreaLeft, Y_Pos := WorkAreaBottom - Height - (Height * P1)
+    }
+    
+    ; === ЛОГИКА 4: КЛАССИЧЕСКИЕ ТОЧНЫЕ ПИКСЕЛИ ===
+    else
+    {
+        X_Pos := P1 + 0
+        Y_Pos := P2 + 0
+    }
+
+    ; Перемещаем и ресайзим окно игры через WinAPI
+    DllCall("user32.dll\SetWindowPos", "Ptr", hwnd1, "Ptr", 0, "Int", X_Pos, "Int", Y_Pos, "Int", Width, "Int", Height, "UInt", 0x0040)
+}
+
+ExitApp
